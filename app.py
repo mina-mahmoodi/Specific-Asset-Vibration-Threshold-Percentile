@@ -11,20 +11,18 @@ uploaded_file = st.file_uploader("Upload your vibration data (.csv or .xlsx)", t
 
 if uploaded_file:
     try:
-        # Handle file loading
+        # Detect file type and load sheet names
         if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-            sheets = {"CSV Data": df}
-            sheet_names = ["CSV Data"]
+            sheets = {"CSV Data": pd.read_csv(uploaded_file)}
         else:
             xls = pd.ExcelFile(uploaded_file)
-            sheet_names = xls.sheet_names
-            sheets = {sheet_name: xls.parse(sheet_name) for sheet_name in sheet_names}
+            sheets = {sheet: xls.parse(sheet) for sheet in xls.sheet_names}
 
-        # Add placeholder option at top
-        sheet_options = ["⬇️ Select a sheet"] + sheet_names
-        selected_sheet = st.selectbox("Select a sheet to analyze", sheet_options)
+        # Create dropdown with "Select a sheet" on top
+        sheet_names = list(sheets.keys())
+        selected_sheet = st.selectbox("Select a sheet to analyze", ["⬇️ Select a sheet"] + sheet_names)
 
+        # Only proceed if a valid sheet is selected
         if selected_sheet != "⬇️ Select a sheet":
             df = sheets[selected_sheet]
 
@@ -32,7 +30,7 @@ if uploaded_file:
             missing_cols = [col for col in expected_columns if col not in df.columns]
 
             if missing_cols:
-                st.warning(f"Missing columns in sheet '{selected_sheet}': {missing_cols}")
+                st.warning(f"❌ Missing columns in sheet '{selected_sheet}': {missing_cols}")
             else:
                 # Prepare DataFrame
                 df_processed = pd.DataFrame({
@@ -44,10 +42,17 @@ if uploaded_file:
                 })
 
                 df_processed.dropna(subset=['t', 'x', 'y', 'z'], inplace=True)
-                df_processed['motor_state'] = df_processed['motor_state'].fillna(3)
+                df_processed['motor_state'].fillna(3, inplace=True)
 
-                # Filter motor_state == 3
-                df_on = df_processed[df_processed['motor_state'] == 3].copy()
+                # Fill missing dates with motor state 3
+                df_all_dates = pd.DataFrame({'t': pd.date_range(start=df_processed['t'].min(), end=df_processed['t'].max())})
+                df_all_dates['t'] = pd.to_datetime(df_all_dates['t'])
+                df_processed['t'] = pd.to_datetime(df_processed['t'])
+
+                df_merged = df_all_dates.merge(df_processed, on='t', how='left')
+                df_merged['motor_state'].fillna(3, inplace=True)
+
+                df_on = df_merged[df_merged['motor_state'] == 3]
 
                 if df_on.empty:
                     st.warning("⚠️ No motor ON data in this sheet.")
