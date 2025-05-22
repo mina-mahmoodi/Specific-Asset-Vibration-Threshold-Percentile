@@ -2,11 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Setup
 st.set_page_config(page_title="Vibration Threshold Calculator", layout="wide")
 st.title("📈 Vibration Warning & Error Threshold Calculator")
 
-# Upload
 uploaded_file = st.file_uploader("Upload your vibration data (.csv or .xlsx)", type=["csv", "xlsx"])
 
 if uploaded_file:
@@ -18,72 +16,61 @@ if uploaded_file:
         else:
             xls = pd.ExcelFile(uploaded_file)
             sheet_names = xls.sheet_names
-            sheets = {s: xls.parse(s) for s in sheet_names}
+            sheets = {sheet_name: None for sheet_name in sheet_names}  # Lazy load
 
-        sheet_options = ["⬇️ Select a sheet"] + sheet_names
-        selected_sheet = st.selectbox("Select a sheet to analyze", options=sheet_options, index=0)
+        selected_sheet = st.selectbox("⬇️ Select a sheet to analyze", ["⬇️ Select a sheet"] + sheet_names)
 
         if selected_sheet != "⬇️ Select a sheet":
+            if sheets[selected_sheet] is None:
+                if uploaded_file.name.endswith(".xlsx"):
+                    sheets[selected_sheet] = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
             df = sheets[selected_sheet]
 
-            expected_cols = ['X', 'Y', 'Z', 'T(motor state)', 'Motor State']
-            missing = [col for col in expected_cols if col not in df.columns]
-            if missing:
-                st.warning(f"Missing columns: {missing}")
+            expected_columns = ['X', 'Y', 'Z', 'T(X)', 'T(Y)', 'T(Z)', 'T(motor state)', 'Motor State']
+            missing_cols = [col for col in expected_columns if col not in df.columns]
+
+            if missing_cols:
+                st.warning(f"❗ Missing columns in sheet '{selected_sheet}': {missing_cols}")
             else:
                 df_processed = pd.DataFrame({
-                    't': pd.to_datetime(df['T(motor state)'], errors='coerce'),
+                    't': pd.to_datetime(df['T(motor state)']),
                     'x': df['X'],
                     'y': df['Y'],
                     'z': df['Z'],
                     'motor_state': df['Motor State']
-                }).dropna(subset=['t', 'x', 'y', 'z', 'motor_state'])
+                }).dropna(subset=['t', 'x', 'y', 'z'])
 
-                df_processed.sort_values('t', inplace=True)
+                # Fill missing motor_state as 3 only in existing rows (no date merge)
+                df_processed['motor_state'] = df_processed['motor_state'].fillna(3)
 
-                # Step 1: OFF/IDLE ranges for motor_state 0 or 1
-                off_idle = df_processed[df_processed['motor_state'].isin([0,1])]
-                limits = {
-                    axis: {
-                        'min': off_idle[axis].min(),
-                        'max': off_idle[axis].max()
-                    } for axis in ['x','y','z']
-                }
+                df_on = df_processed[df_processed['motor_state'] == 3].copy()
 
-                st.info("⚙️ OFF/IDLE vibration ranges:")
-                for axis in ['x','y','z']:
-                    st.write(f"{axis.upper()}: {limits[axis]['min']:.4f} to {limits[axis]['max']:.4f}")
-
-                # Step 2: Filter out data within OFF/IDLE ranges
-                outside_off_idle = df_processed[
-                    ~(
-                        (df_processed['x'] >= limits['x']['min']) & (df_processed['x'] <= limits['x']['max']) &
-                        (df_processed['y'] >= limits['y']['min']) & (df_processed['y'] <= limits['y']['max']) &
-                        (df_processed['z'] >= limits['z']['min']) & (df_processed['z'] <= limits['z']['max'])
-                    )
-                ]
-
-                # Step 3: Keep only motor_state == 3 (strict ON)
-                motor_on = outside_off_idle[outside_off_idle['motor_state'] == 3]
-
-                if motor_on.empty:
-                    st.warning("⚠️ No ON-state data found after filtering.")
+                if df_on.empty:
+                    st.warning("⚠️ No motor ON data in this sheet.")
                 else:
                     thresholds = {
                         axis: {
-                            'warning': motor_on[axis].quantile(0.85),
-                            'error': motor_on[axis].quantile(0.95)
-                        } for axis in ['x','y','z']
+                            'warning': df_on[axis].quantile(0.85),
+                            'error': df_on[axis].quantile(0.95)
+                        } for axis in ['x', 'y', 'z']
                     }
 
-                    st.subheader(f"🎯 Thresholds (Motor ON, filtered) - Sheet: {selected_sheet}")
-                    for axis in ['x','y','z']:
+                    st.subheader(f"🎯 Thresholds (Motor ON) - Sheet: {selected_sheet}")
+                    for axis in ['x', 'y', 'z']:
                         col1, col2 = st.columns(2)
                         col1.metric(f"{axis.upper()} - 85% Warning", f"{thresholds[axis]['warning']:.4f}")
                         col2.metric(f"{axis.upper()} - 95% Error", f"{thresholds[axis]['error']:.4f}")
 
-                    st.subheader("📉 Vibration Plot (Motor ON, filtered)")
-                    fig = px.line(motor_on, x='t', y=['x','y','z'], labels={'value': 'Vibration', 't': 'Timestamp'})
+                    # ⏱️ Limit points for faster plotting
+                    max_points = 5000
+                    if len(df_on) > max_points:
+                        df_on_sampled = df_on.sort_values('t').iloc[::len(df_on)//max_points]
+                    else:
+                        df_on_sampled = df_on
+
+                    st.subheader("📉 Vibration Plot (Motor ON only)")
+                    fig = px.line(df_on_sampled, x='t', y=['x', 'y', 'z'],
+                                  labels={'value': 'Vibration', 't': 'Timestamp'})
                     st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
