@@ -11,19 +11,21 @@ uploaded_file = st.file_uploader("Upload your vibration data (.csv or .xlsx)", t
 
 if uploaded_file:
     try:
-        # Detect file type and load data
+        # Handle file loading
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
-            sheet_names = ["CSV Data"]
-            selected_sheet = "CSV Data"
             sheets = {"CSV Data": df}
+            sheet_names = ["CSV Data"]
         else:
             xls = pd.ExcelFile(uploaded_file)
             sheet_names = xls.sheet_names
-            selected_sheet = st.selectbox("Select a sheet to analyze", sheet_names)
             sheets = {sheet_name: xls.parse(sheet_name) for sheet_name in sheet_names}
 
-        if selected_sheet:
+        # Add placeholder option at top
+        sheet_options = ["⬇️ Select a sheet"] + sheet_names
+        selected_sheet = st.selectbox("Select a sheet to analyze", sheet_options)
+
+        if selected_sheet != "⬇️ Select a sheet":
             df = sheets[selected_sheet]
 
             expected_columns = ['X', 'Y', 'Z', 'T(X)', 'T(Y)', 'T(Z)', 'T(motor state)', 'Motor State']
@@ -32,7 +34,7 @@ if uploaded_file:
             if missing_cols:
                 st.warning(f"Missing columns in sheet '{selected_sheet}': {missing_cols}")
             else:
-                # Rename and select necessary columns
+                # Prepare DataFrame
                 df_processed = pd.DataFrame({
                     't': df['T(motor state)'],
                     'x': df['X'],
@@ -41,20 +43,16 @@ if uploaded_file:
                     'motor_state': df['Motor State']
                 })
 
-                df_processed.dropna(subset=['t', 'x', 'y', 'z', 'motor_state'], inplace=True)
-
-                # Assume all dates not in motor_state as motor_state = 3
-                # Since here each row is a data point, and motor_state is per row,
-                # we treat missing motor_state as 3 (you can adjust if needed)
+                df_processed.dropna(subset=['t', 'x', 'y', 'z'], inplace=True)
                 df_processed['motor_state'] = df_processed['motor_state'].fillna(3)
 
-                # Filter motor_state == 3 (motor ON)
+                # Filter motor_state == 3
                 df_on = df_processed[df_processed['motor_state'] == 3].copy()
 
                 if df_on.empty:
                     st.warning("⚠️ No motor ON data in this sheet.")
                 else:
-                    # Thresholds: 85th for warning, 95th for error
+                    # Calculate thresholds
                     thresholds = {
                         axis: {
                             'warning': df_on[axis].quantile(0.85),
