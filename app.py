@@ -19,35 +19,46 @@ if uploaded_file:
         else:
             xls = pd.ExcelFile(uploaded_file)
             sheet_names = xls.sheet_names
-            sheets = {sheet_name: xls.parse(sheet_name) for sheet_name in sheet_names}
+            sheets = {sheet_name: None for sheet_name in sheet_names}  # Lazy load
 
-        # Add placeholder option at top
-        sheet_options = ["⬇️ Select a sheet"] + sheet_names
-        selected_sheet = st.selectbox("Select a sheet to analyze", sheet_options)
+        # Sheet selector with placeholder on top
+        selected_sheet = st.selectbox("⬇️ Select a sheet to analyze", ["⬇️ Select a sheet"] + sheet_names)
 
         if selected_sheet != "⬇️ Select a sheet":
+            # Load selected sheet lazily
+            if sheets[selected_sheet] is None:
+                if uploaded_file.name.endswith(".xlsx"):
+                    sheets[selected_sheet] = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
             df = sheets[selected_sheet]
 
+            # Expected columns
             expected_columns = ['X', 'Y', 'Z', 'T(X)', 'T(Y)', 'T(Z)', 'T(motor state)', 'Motor State']
             missing_cols = [col for col in expected_columns if col not in df.columns]
 
             if missing_cols:
-                st.warning(f"Missing columns in sheet '{selected_sheet}': {missing_cols}")
+                st.warning(f"❗ Missing columns in sheet '{selected_sheet}': {missing_cols}")
             else:
-                # Prepare DataFrame
+                # Build initial DataFrame
                 df_processed = pd.DataFrame({
-                    't': df['T(motor state)'],
+                    't': pd.to_datetime(df['T(motor state)']),
                     'x': df['X'],
                     'y': df['Y'],
                     'z': df['Z'],
                     'motor_state': df['Motor State']
-                })
+                }).dropna(subset=['t', 'x', 'y', 'z'])
 
-                df_processed.dropna(subset=['t', 'x', 'y', 'z'], inplace=True)
-                df_processed['motor_state'] = df_processed['motor_state'].fillna(3)
+                # Create full time index
+                full_time = pd.date_range(start=df_processed['t'].min(), end=df_processed['t'].max(), freq='T')
+                df_all = pd.DataFrame({'t': full_time})
 
-                # Filter motor_state == 3
-                df_on = df_processed[df_processed['motor_state'] == 3].copy()
+                # Merge with actual data
+                df_merged = df_all.merge(df_processed, on='t', how='left')
+
+                # Assume missing motor state = 3
+                df_merged['motor_state'] = df_merged['motor_state'].fillna(3)
+
+                # Filter motor ON only
+                df_on = df_merged[df_merged['motor_state'] == 3].copy()
 
                 if df_on.empty:
                     st.warning("⚠️ No motor ON data in this sheet.")
