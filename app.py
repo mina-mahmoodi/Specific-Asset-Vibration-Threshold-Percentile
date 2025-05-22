@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
 st.set_page_config(page_title="Vibration Threshold Calculator", layout="wide")
 st.title("📈 Vibration Warning & Error Threshold Calculator")
@@ -7,7 +8,7 @@ st.title("📈 Vibration Warning & Error Threshold Calculator")
 uploaded_file = st.file_uploader("Upload an Excel or CSV file", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
-    # Load Excel or CSV
+    # Load file
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
         sheet_selected = None
@@ -16,7 +17,7 @@ if uploaded_file:
         sheet_selected = st.selectbox("Select a sheet", xls.sheet_names)
         df = pd.read_excel(uploaded_file, sheet_name=sheet_selected)
 
-    # Rename known columns
+    # Rename known columns for consistency
     col_map = {
         'X': 'x', 'Y': 'y', 'Z': 'z',
         'T(X)': 't_x', 'T(Y)': 't_y', 'T(Z)': 't_z',
@@ -29,13 +30,13 @@ if uploaded_file:
     if not all(col in df.columns for col in required_cols):
         st.error(f"Missing required columns: {required_cols}")
     else:
-        # Handle missing motor state column
+        # Assume missing motor_state as 3 (ON)
         if 'motor_state' not in df.columns:
             df['motor_state'] = 3
         else:
             df['motor_state'] = df['motor_state'].fillna(3)
 
-        # Filter for rows where motor was ON
+        # Filter rows where motor_state is 3 (ON)
         df_on = df[df['motor_state'] == 3]
 
         if df_on.empty:
@@ -43,7 +44,6 @@ if uploaded_file:
         else:
             st.subheader(f"📊 Vibration Thresholds (Sheet: {sheet_selected if sheet_selected else 'CSV'})")
 
-            # Calculate thresholds
             thresholds = {}
             for axis in ['x', 'y', 'z']:
                 warning = df_on[axis].quantile(0.85)
@@ -53,14 +53,14 @@ if uploaded_file:
                     'Error Threshold (95%)': error
                 }
 
-            # Display results
+            # Show thresholds table
             result_df = pd.DataFrame(thresholds).T
             st.dataframe(result_df.style.format("{:.2f}"))
 
-            # Optional: show raw data preview
-            if st.checkbox("Show raw vibration data (first 100 rows)"):
-                st.dataframe(df_on[['x', 'y', 'z']].head(100))
-
-            # Optional: show vibration line chart
-            if st.checkbox("Show simple vibration line chart"):
-                st.line_chart(df_on[['x', 'y', 'z']].reset_index(drop=True))
+            # Plot vibration histograms
+            st.subheader("📈 Vibration Distribution While Motor is ON")
+            melted = df_on.melt(value_vars=['x', 'y', 'z'], var_name='Axis', value_name='Vibration')
+            fig = px.histogram(melted, x='Vibration', color='Axis',
+                               barmode='overlay', marginal='box',
+                               title="Vibration Histogram (Motor State = 3)")
+            st.plotly_chart(fig, use_container_width=True)
