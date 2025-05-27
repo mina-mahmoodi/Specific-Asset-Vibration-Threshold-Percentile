@@ -74,14 +74,6 @@ if uploaded_files:
         if all_dfs:
             combined_df = pd.concat(all_dfs).sort_values('t').reset_index(drop=True)
 
-            # Calculate duration and display time range
-            start_time = combined_df['t'].min()
-            end_time = combined_df['t'].max()
-            duration = end_time - start_time
-
-            st.markdown(f"### 📅 Data Duration")
-            st.write(f"**From:** {start_time}  \n**To:** {end_time}  \n**Duration:** {duration}")
-
             thresholds = {
                 axis: {
                     'warning': math.ceil(combined_df[axis].quantile(0.85) * 100) / 100,
