@@ -14,11 +14,11 @@ if uploaded_files:
     all_dfs = []
     sheet_selections = {}
 
-    # First, ask user to select sheets for each uploaded file
+    # Ask user to select sheets for each uploaded Excel file
     for uploaded_file in uploaded_files:
         try:
             if uploaded_file.name.endswith(".csv"):
-                # For CSV, just one 'sheet'
+                # CSV has no sheets
                 sheet_selections[uploaded_file.name] = "CSV Data"
             else:
                 xls = pd.ExcelFile(uploaded_file)
@@ -31,7 +31,7 @@ if uploaded_files:
         except Exception as e:
             st.error(f"Error reading {uploaded_file.name}: {e}")
 
-    # Process only after all sheets have been selected (not placeholder)
+    # Process only after all sheets are selected (no placeholder)
     ready_to_process = all(
         (sheet_selections.get(fname) and sheet_selections[fname] != "-- Select a sheet --")
         for fname in sheet_selections
@@ -50,7 +50,7 @@ if uploaded_files:
                 else:
                     df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
 
-                # Required vibration columns
+                # Check required vibration columns
                 required_cols = ['X', 'Y', 'Z', 'T(X)', 'T(Y)', 'T(Z)']
                 missing_cols = [c for c in required_cols if c not in df.columns]
                 if missing_cols:
@@ -59,68 +59,97 @@ if uploaded_files:
                     )
                     continue
 
-                # Convert timestamps
+                # Convert timestamps to datetime
                 for col in ['T(X)', 'T(Y)', 'T(Z)']:
                     df[col] = pd.to_datetime(df[col], errors='coerce')
 
-                # Prepare vibration dataframes for each axis
+                # Prepare axis dataframes
                 df_x = df[['T(X)', 'X']].rename(columns={'T(X)': 't', 'X': 'x'}).dropna()
                 df_y = df[['T(Y)', 'Y']].rename(columns={'T(Y)': 't', 'Y': 'y'}).dropna()
                 df_z = df[['T(Z)', 'Z']].rename(columns={'T(Z)': 't', 'Z': 'z'}).dropna()
 
-                # Check for motor state columns
+                # Check motor state columns - change here:
                 motor_state_cols = [col for col in ['T(motor state)', 'Motor State'] if col in df.columns]
-                motor_state_available = len(motor_state_cols) == 2
+                motor_state_available = len(motor_state_cols) > 0  # Changed from == 2
 
                 if motor_state_available:
-                    df['T(motor state)'] = pd.to_datetime(df['T(motor state)'], errors='coerce')
-                    df_motor = df[['T(motor state)', 'Motor State']].rename(
-                        columns={'T(motor state)': 't', 'Motor State': 'motor_state'}
-                    ).dropna()
+                    # Try to process motor state data if both columns exist
+                    if 'T(motor state)' in df.columns and 'Motor State' in df.columns:
+                        df['T(motor state)'] = pd.to_datetime(df['T(motor state)'], errors='coerce')
+                        df_motor = df[['T(motor state)', 'Motor State']].rename(
+                            columns={'T(motor state)': 't', 'Motor State': 'motor_state'}
+                        ).dropna()
 
-                    # Merge motor state with axis data on nearest timestamp
-                    df_combined = pd.merge_asof(
-                        df_motor.sort_values('t'),
-                        df_x.sort_values('t'),
-                        on='t',
-                        direction='nearest'
-                    )
-                    df_combined = pd.merge_asof(
-                        df_combined.sort_values('t'),
-                        df_y.sort_values('t'),
-                        on='t',
-                        direction='nearest'
-                    )
-                    df_combined = pd.merge_asof(
-                        df_combined.sort_values('t'),
-                        df_z.sort_values('t'),
-                        on='t',
-                        direction='nearest'
-                    )
-
-                    # Drop rows with any NaNs in vibration or motor_state
-                    df_combined.dropna(subset=['x', 'y', 'z', 'motor_state'], inplace=True)
-
-                    # Remove rows with zero vibration values
-                    df_combined = df_combined[(df_combined[['x', 'y', 'z']] != 0).all(axis=1)]
-
-                    df_on = df_combined[df_combined['motor_state'] == 3]
-
-                    if df_on.empty:
-                        st.warning(
-                            f"⚠️ No motor ON data in '{uploaded_file.name}' sheet '{selected_sheet}'. "
-                            "Using all non-zero data regardless of motor state."
+                        # Merge motor state with vibration axes data on nearest timestamp
+                        df_combined = pd.merge_asof(
+                            df_motor.sort_values('t'),
+                            df_x.sort_values('t'),
+                            on='t',
+                            direction='nearest'
                         )
-                        df_use = df_combined
+                        df_combined = pd.merge_asof(
+                            df_combined.sort_values('t'),
+                            df_y.sort_values('t'),
+                            on='t',
+                            direction='nearest'
+                        )
+                        df_combined = pd.merge_asof(
+                            df_combined.sort_values('t'),
+                            df_z.sort_values('t'),
+                            on='t',
+                            direction='nearest'
+                        )
+
+                        # Drop rows with any NaNs in vibration or motor_state
+                        df_combined.dropna(subset=['x', 'y', 'z', 'motor_state'], inplace=True)
+
+                        # Remove rows with zero vibration values
+                        df_combined = df_combined[(df_combined[['x', 'y', 'z']] != 0).all(axis=1)]
+
+                        # Filter for motor ON state; assuming motor_state==3 means ON (as in your original code)
+                        df_on = df_combined[df_combined['motor_state'] == 3]
+
+                        if df_on.empty:
+                            st.warning(
+                                f"⚠️ No motor ON data in '{uploaded_file.name}' sheet '{selected_sheet}'. "
+                                "Using all non-zero data regardless of motor state."
+                            )
+                            df_use = df_combined
+                        else:
+                            st.success(
+                                f"✅ Motor ON data found in '{uploaded_file.name}' sheet '{selected_sheet}'. "
+                                "Calculating thresholds based on motor ON data."
+                            )
+                            df_use = df_on
                     else:
-                        st.success(
-                            f"✅ Motor ON data found in '{uploaded_file.name}' sheet '{selected_sheet}'. "
-                            "Calculating thresholds based on motor ON data."
+                        # Motor state columns present but incomplete: assume all ON
+                        st.warning(
+                            f"⚠️ Motor state columns incomplete or missing timestamps in '{uploaded_file.name}' sheet '{selected_sheet}'. "
+                            "Assuming all motor states are ON and using all non-zero data."
                         )
-                        df_use = df_on
-
+                        # Merge axis data only
+                        df_combined = pd.merge_asof(
+                            df_x.sort_values('t'),
+                            df_y.sort_values('t'),
+                            on='t',
+                            direction='nearest'
+                        )
+                        df_combined = pd.merge_asof(
+                            df_combined.sort_values('t'),
+                            df_z.sort_values('t'),
+                            on='t',
+                            direction='nearest'
+                        )
+                        df_combined.dropna(subset=['x', 'y', 'z'], inplace=True)
+                        df_combined = df_combined[(df_combined[['x', 'y', 'z']] != 0).all(axis=1)]
+                        df_use = df_combined
                 else:
-                    # Motor state not available, merge axis data only
+                    # Motor state columns not found, assume all motor ON
+                    st.warning(
+                        f"⚠️ Motor state columns not found in '{uploaded_file.name}' sheet '{selected_sheet}'. "
+                        "Assuming all motor states are ON and using all non-zero data."
+                    )
+                    # Merge axis data only
                     df_combined = pd.merge_asof(
                         df_x.sort_values('t'),
                         df_y.sort_values('t'),
@@ -135,18 +164,7 @@ if uploaded_files:
                     )
                     df_combined.dropna(subset=['x', 'y', 'z'], inplace=True)
                     df_combined = df_combined[(df_combined[['x', 'y', 'z']] != 0).all(axis=1)]
-
-                    if df_combined.empty:
-                        st.warning(
-                            f"⚠️ No usable vibration data found after filtering in '{uploaded_file.name}' sheet '{selected_sheet}'. Skipping."
-                        )
-                        continue
-                    else:
-                        st.warning(
-                            f"⚠️ Motor state columns not found in '{uploaded_file.name}' sheet '{selected_sheet}'. "
-                            "Calculating thresholds based on all available non-zero data."
-                        )
-                        df_use = df_combined
+                    df_use = df_combined
 
                 if df_use.empty:
                     st.warning(
@@ -214,7 +232,6 @@ if uploaded_files:
         else:
             st.warning("⚠️ No usable data found in uploaded files after filtering.")
     else:
-        st.info("⏳ Please select sheets for all uploaded Excel files to proceed.")
-
+        st.info("ℹ️ Please select sheets for all uploaded Excel files to proceed.")
 else:
-    st.info("📂 Upload one or more CSV or Excel files to begin.")
+    st.info("ℹ️ Please upload one or more vibration data files.")
