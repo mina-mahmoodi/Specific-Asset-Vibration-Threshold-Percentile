@@ -6,9 +6,7 @@ import math
 st.set_page_config(page_title="Vibration Threshold Calculator", layout="wide")
 st.title("📈 Vibration Warning & Error Threshold Calculator")
 
-uploaded_files = st.file_uploader("Upload one or more vibration data files (.csv or .xlsx)", type=["csv", "xlsx"], accept_multiple_files=True)
-
-
+uploaded_file = st.file_uploader("Upload your vibration data (.csv or .xlsx)", type=["csv", "xlsx"])
 
 if uploaded_file:
     try:
