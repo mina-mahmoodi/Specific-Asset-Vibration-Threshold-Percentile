@@ -74,6 +74,12 @@ if uploaded_files:
         if all_dfs:
             combined_df = pd.concat(all_dfs).sort_values('t').reset_index(drop=True)
 
+            # Show data time range
+            start_time = combined_df['t'].min()
+            end_time = combined_df['t'].max()
+            st.markdown(f"🕒 **Data Time Range:** {start_time.strftime('%Y-%m-%d %H:%M:%S')} to {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            # Calculate thresholds
             thresholds = {
                 axis: {
                     'warning': math.ceil(combined_df[axis].quantile(0.85) * 100) / 100,
