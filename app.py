@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import math
+from io import StringIO
 
 st.set_page_config(page_title="Vibration Threshold Calculator", layout="wide")
 st.title("📈 Vibration Warning & Error Threshold Calculator")
@@ -44,16 +45,13 @@ if uploaded_files:
                 else:
                     df = pd.read_excel(uploaded_file, sheet_name=sheet)
 
-                # Timestamp and axis columns
                 if not all(col in df.columns for col in ['T(X)', 'T(Y)', 'T(Z)', 'X', 'Y', 'Z']):
                     st.warning(f"Missing required columns in {uploaded_file.name} / {sheet}")
                     continue
 
-                # Convert time columns
                 for col in ['T(X)', 'T(Y)', 'T(Z)']:
                     df[col] = pd.to_datetime(df[col], errors='coerce')
 
-                # Drop rows with no time or all axis values zero
                 df_use = df.dropna(subset=['T(X)', 'T(Y)', 'T(Z)'])
                 df_use = df_use[(df_use[['X', 'Y', 'Z']] != 0).all(axis=1)]
 
@@ -74,12 +72,10 @@ if uploaded_files:
         if all_dfs:
             combined_df = pd.concat(all_dfs).sort_values('t').reset_index(drop=True)
 
-            # Show data time range
             start_time = combined_df['t'].min()
             end_time = combined_df['t'].max()
-            st.markdown(f"🕒 **Data Time Range:** {start_time.strftime('%Y-%m-%d %H:%M:%S')} to {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            st.markdown(f"🕒 **Dataset Time Period:** From {start_time.strftime('%Y-%m-%d %H:%M:%S')} to {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            # Calculate thresholds
             thresholds = {
                 axis: {
                     'warning': math.ceil(combined_df[axis].quantile(0.85) * 100) / 100,
@@ -93,6 +89,14 @@ if uploaded_files:
                 col1, col2 = st.columns(2)
                 col1.metric(f"{axis.upper()} - 85% Warning", f"{thresholds[axis]['warning']:.2f}")
                 col2.metric(f"{axis.upper()} - 95% Error", f"{thresholds[axis]['error']:.2f}")
+
+            # Create and offer download for the thresholds
+            threshold_df = pd.DataFrame([
+                {'Axis': axis.upper(), '85% Warning': thresholds[axis]['warning'], '95% Error': thresholds[axis]['error']}
+                for axis in ['x', 'y', 'z']
+            ])
+            csv_output = threshold_df.to_csv(index=False)
+            st.download_button("⬇️ Download Thresholds as CSV", csv_output, file_name="vibration_thresholds.csv", mime="text/csv")
 
             selected_axis = st.selectbox("📌 Select axis to display", ['x', 'y', 'z'])
 
